@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn OC Travel Blocker
 // @namespace    https://github.com/
-// @version      1.0
+// @version      1.1
 // @description  Blocks traveling 1 hour before Organized Crime and during OC
 // @author       KJsWrath93
 // @match        https://www.torn.com/*
@@ -15,7 +15,7 @@
 (function() {
 'use strict';
 
-const OC_WARNING_TIME = 3600; // 1 hour
+const OC_WARNING_TIME = 3600;
 
 let apiKey = GM_getValue("torn_api_key");
 
@@ -24,7 +24,10 @@ if (!apiKey) {
     if (apiKey) GM_setValue("torn_api_key", apiKey);
 }
 
+window.travelBlocked = false;
+
 async function getOCData() {
+
     const url = `https://api.torn.com/faction/?selections=crimes&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
@@ -32,16 +35,23 @@ async function getOCData() {
     if (!data.crimes) return null;
 
     let nextCrime = null;
+    let crimeStarted = false;
 
     Object.values(data.crimes).forEach(crime => {
+
+        if (crime.started) {
+            crimeStarted = true;
+        }
+
         if (crime.ready_at) {
             if (!nextCrime || crime.ready_at < nextCrime) {
                 nextCrime = crime.ready_at;
             }
         }
+
     });
 
-    return nextCrime;
+    return { nextCrime, crimeStarted };
 }
 
 function createBanner() {
@@ -100,7 +110,6 @@ function createBanner() {
         };
 
     };
-
 }
 
 function updateBanner(blocked) {
@@ -119,47 +128,55 @@ function updateBanner(blocked) {
     }
 }
 
-function blockTravel() {
+function blockTravelActions() {
 
-    const links = document.querySelectorAll("a");
+    document.addEventListener("click", function(e) {
 
-    links.forEach(link => {
+        if (!window.travelBlocked) return;
 
-        if (link.href && link.href.includes("travel")) {
+        const element = e.target.closest("a,button");
 
-            link.addEventListener("click", function(e) {
+        if (!element) return;
 
-                if (window.travelBlocked) {
-                    e.preventDefault();
-                    alert("Travel blocked due to Organized Crime timer.");
-                }
+        const text = element.innerText?.toLowerCase() || "";
+        const href = element.href || "";
 
-            });
-
+        if (
+            href.includes("travel") ||
+            href.includes("air") ||
+            text.includes("travel") ||
+            text.includes("airport") ||
+            text.includes("fly")
+        ) {
+            e.preventDefault();
+            e.stopPropagation();
+            alert("Travel blocked due to Organized Crime timer.");
         }
 
-    });
-
+    }, true);
 }
 
 async function checkOC() {
 
-    const nextOC = await getOCData();
-
-    if (!nextOC) return;
+    const data = await getOCData();
+    if (!data) return;
 
     const now = Math.floor(Date.now() / 1000);
-    const timeUntilOC = nextOC - now;
+
+    if (data.crimeStarted) {
+
+        window.travelBlocked = false;
+        updateBanner(false);
+        return;
+
+    }
+
+    const timeUntilOC = data.nextCrime - now;
 
     if (timeUntilOC <= OC_WARNING_TIME && timeUntilOC > 0) {
 
         window.travelBlocked = true;
         updateBanner(true);
-
-    } else if (timeUntilOC <= 0) {
-
-        window.travelBlocked = false;
-        updateBanner(false);
 
     } else {
 
@@ -167,11 +184,10 @@ async function checkOC() {
         updateBanner(false);
 
     }
-
 }
 
 createBanner();
-blockTravel();
+blockTravelActions();
 
 setInterval(checkOC, 30000);
 
